@@ -1,0 +1,7 @@
+httpx
+fastapi
+dotenv
+psycopg2
+uvicorn
+openpyxl
+python-multipart
