@@ -149,3 +149,23 @@ async def start_calls(batch_limit: int = 200):
     finally:
         conn.close()
 
+        
+@app.post("/emergency-stop")
+async def emergency_stop():
+    """Immediately stop all calls by clearing the queue"""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        # Delete all pending calls
+        cur.execute("DELETE FROM phone_queue WHERE status = 'pending'")
+        deleted_count = cur.rowcount
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"message": f"🚨 EMERGENCY STOP: Deleted {deleted_count} pending calls"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
