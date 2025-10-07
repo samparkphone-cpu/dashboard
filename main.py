@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
-
+from fastapi.responses import Response
+from fastapi.requests import Request
+import io
 import os
 import logging
 import httpx
@@ -149,7 +151,78 @@ async def start_calls(batch_limit: int = 200):
     finally:
         conn.close()
 
+@app.post("/twilio-webhook")
+async def twilio_webhook(request: Request):
+    """Receive call status updates from Twilio"""
+    try:
+        form_data = await request.form()
+        call_status = form_data.get('CallStatus')
+        call_sid = form_data.get('CallSid')
         
+        print(f"🎯 WEBHOOK RECEIVED: {call_sid} -> {call_status}")
+        
+        # Update call_dispatch table (where the sid is stored)
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE call_dispatch SET status = %s WHERE sid = %s",
+            (call_status, call_sid)
+        )
+        updated = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        print(f"✅ Database updated: {updated} rows affected")
+        return {"status": "ok"}
+        
+    except Exception as e:
+        print(f"❌ Webhook error: {e}")
+        return {"status": "error"}
+
+@app.get("/download-calls")
+async def download_calls():
+    """Download call records as CSV (no pandas dependency)"""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT 
+                cd.id,
+                pq.name as contact_name,
+                cd.phone_number as client_number,
+                tn.phone_number as twilio_number,
+                cd.status,
+                cd.created_at,
+                cd.attempts,
+                cd.last_error
+            FROM call_dispatch cd
+            LEFT JOIN twilio_numbers tn ON cd.twilio_number_id = tn.id
+            LEFT JOIN phone_queue pq ON cd.phone_number = pq.phone_number
+            ORDER BY cd.created_at DESC
+        """)
+        
+        data = cur.fetchall()
+        columns = ['id', 'contact_name', 'client_number', 'twilio_number', 'status', 'created_at', 'attempts', 'last_error']
+        
+        # Create CSV manually (no pandas needed)
+        csv_content = ",".join(columns) + "\n"
+        for row in data:
+            csv_content += ",".join(str(x) if x is not None else "" for x in row) + "\n"
+        
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=call_records.csv"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+   
 @app.post("/emergency-stop")
 async def emergency_stop():
     """Immediately stop all calls by clearing the queue"""
